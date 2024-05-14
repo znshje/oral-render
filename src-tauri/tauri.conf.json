@@ -32,8 +32,8 @@
       "active": true,
       "category": "DeveloperTool",
       "copyright": "",
-      "deb": {
-        "depends": []
+      "appimage": {
+        "bundleMediaFramework": false
       },
       "externalBin": [],
       "icon": [
@@ -43,7 +43,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.tauri.dev",
+      "identifier": "com.znshje.oralrender",
       "longDescription": "",
       "macOS": {
         "entitlements": null,
