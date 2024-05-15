@@ -5,20 +5,27 @@ import {
 } from "@radix-ui/themes";
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
 import {
-    readBinaryFile, writeBinaryFile,
-} from "@tauri-apps/api/fs";
+    readFile, readTextFile, writeFile,
+} from "@tauri-apps/plugin-fs";
 import {useCallback, useEffect, useMemo, useState, useRef} from "react";
-import {ArcballControls, Bvh, ContactShadows, OrthographicCamera} from "@react-three/drei";
+import {ArcballControls, Bvh, ContactShadows, OrthographicCamera, PivotControls} from "@react-three/drei";
 import {Canvas, useThree, useFrame} from "@react-three/fiber";
 import {set} from "@/lib/slices/baseSlice";
 import {PLYLoader} from "three/examples/jsm/loaders/PLYLoader";
 import {
-    DoubleSide, Vector3, Layers, ACESFilmicToneMapping
+    DoubleSide, Vector3, Layers, ACESFilmicToneMapping, Matrix4, Quaternion
 } from "three";
 import {useRouter} from "next/navigation";
 import {
     isPermissionGranted, requestPermission, sendNotification,
-} from "@tauri-apps/api/notification";
+} from "@tauri-apps/plugin-notification";
+import * as THREE from 'three';
+import {computeBoundsTree, disposeBoundsTree, acceleratedRaycast} from 'three-mesh-bvh';
+
+// Add the extension functions
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 let objectId = null;
 const materialConfig = {
@@ -27,9 +34,12 @@ const materialConfig = {
     // clearcoatRoughness: 0.2,
 };
 
-const Model = ({modelPath, setLoading, onLoad}) => {
+const Model = ({modelPath, setLoading, onLoad, flatShading = false}) => {
     const [model, setModel] = useState(null);
     const boxVec = useRef(new Vector3())
+    const [ctrl, setCtrl] = useState(false)
+    const ref = useRef()
+    const [matrix, setMatrix] = useState(new Matrix4())
 
     const loadModel = useCallback(async () => {
         setModel((prev) => {
@@ -41,7 +51,7 @@ const Model = ({modelPath, setLoading, onLoad}) => {
         if (!modelPath) return;
 
         setLoading(0);
-        const data = await readBinaryFile(modelPath.path);
+        const data = await readFile(modelPath.path);
 
         const loader = new PLYLoader();
         const geometry = loader.parse(data.buffer);
@@ -54,6 +64,7 @@ const Model = ({modelPath, setLoading, onLoad}) => {
         geometry.scale(scale, scale, scale)
 
         geometry.computeBoundingBox()
+        geometry.computeBoundsTree()
         boxVec.current.copy(geometry.boundingBox.min)
 
         setModel(geometry);
@@ -62,6 +73,14 @@ const Model = ({modelPath, setLoading, onLoad}) => {
         }, 500)
         setLoading(null);
     }, [modelPath, setLoading]);
+
+    const transforms = useMemo(() => {
+        const position = new Vector3()
+        const quaternion = new Quaternion()
+        const scale = new Vector3()
+        matrix.decompose(position, quaternion, scale)
+        return {position, quaternion, scale}
+    }, [matrix])
 
     useEffect(() => {
         loadModel();
@@ -79,19 +98,44 @@ const Model = ({modelPath, setLoading, onLoad}) => {
         }
     });
 
-    return (model && (<group>
-        <mesh geometry={model} castShadow>
-            <meshPhongMaterial
-                color="#e1e1e1"
-                specular="#1c1c1c"
-                vertexColors={false}
-                side={DoubleSide}
+    useEffect(() => {
+        if (ref.current) {
+            ref.current.material.flatShading = flatShading
+            ref.current.material.needsUpdate = true
+        }
+    }, [flatShading]);
 
-                {...materialConfig}
-            />
-        </mesh>
-        <ContactShadows blur={0.8} opacity={0.4} far={10} position={[0, boxVec.current.y, 0]} color="#000000" />
-    </group>));
+    return (model && (<>
+        <PivotControls
+            disableScaling
+            visible={ctrl}
+            autoTransform={false}
+            matrix={matrix}
+            onDrag={(l) => {
+                setMatrix(l)
+            }}
+        >
+            <group {...transforms}>
+                <mesh ref={ref} geometry={model} castShadow onClick={e => {
+                    if (e.intersections[0].object.uuid !== ref.current.uuid) {
+                        return;
+                    }
+                    setCtrl(prev => !prev)
+                }}>
+                    <meshPhongMaterial
+                        color="#e1e1e1"
+                        specular="#1c1c1c"
+                        vertexColors={false}
+                        flatShading={flatShading}
+                        side={DoubleSide}
+
+                        {...materialConfig}
+                    />
+                </mesh>
+            </group>
+        </PivotControls>
+        <ContactShadows blur={0.8} opacity={0.4} far={10} position={[0, boxVec.current.y, 0]} color="#000000"/>
+    </>));
 };
 
 const Scene = ({children}) => {
@@ -104,12 +148,12 @@ const Scene = ({children}) => {
     })
 
     return (<>
-        <hemisphereLight intensity={0.2} groundColor="white"/>
-        <directionalLight
-            ref={lightRef}
-            color="#ffffff"
-            intensity={3.14}
-            position={new Vector3(0, 0, 200)}
+        <hemisphereLight intensity={0.1} groundColor="white"/>
+        <spotLight
+            color="white"
+            decay={0.14}
+            intensity={3.2}
+            position={[4, 5, 8]}
         />
         <group>
             {children}
@@ -164,6 +208,7 @@ export default function Render() {
     const imageSize = useAppSelector((state) => state.base.imageSize);
     const notification = useAppSelector((state) => state.base.notification);
     const [paused, setPaused] = useState(true);
+    const [flatShading, setFlatShading] = useState(true);
     const [loading, setLoading] = useState(null);
     const router = useRouter();
     const canvasRef = useRef();
@@ -194,7 +239,7 @@ export default function Render() {
                     (savePath + "/").replace(/\/\/$/, "/") +
                     fileList[index].name +
                     ".png";
-                await writeBinaryFile(outputFileName, new Uint8Array(data));
+                await writeFile(outputFileName, new Uint8Array(data));
                 dispatch(
                     set((state) => {
                         state.finishedAt = state.index;
@@ -218,10 +263,11 @@ export default function Render() {
                 modelPath={fileList[index]}
                 setLoading={setLoading}
                 onLoad={() => capture()}
+                flatShading={flatShading}
             />
         }
         return undefined
-    }, [capture, fileList, index])
+    }, [capture, fileList, flatShading, index])
 
     useEffect(() => {
         if (index > -1 && paused) return;
@@ -325,6 +371,19 @@ export default function Render() {
                     position: "absolute", zIndex: 10, left: "50%", top: "50%", transform: "translate(-50%, -50%)",
                 }}
             />)}
+            <div style={{
+                height: 32,
+                padding: 8,
+                display: 'flex'
+            }}>
+                <span>
+                <Checkbox
+                    checked={flatShading}
+                    onCheckedChange={(v) => setFlatShading(v)}
+                />
+                <span>FlatShading</span>
+                </span>
+            </div>
             <div
                 style={{
                     width: imageSize[0], height: imageSize[1], margin: "auto",

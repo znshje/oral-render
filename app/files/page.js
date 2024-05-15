@@ -1,7 +1,7 @@
 "use client";
 
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
-import {BaseDirectory, readDir} from "@tauri-apps/api/fs";
+import {BaseDirectory, readDir} from "@tauri-apps/plugin-fs";
 import {useCallback, useEffect, useState} from "react";
 import {
     Badge,
@@ -16,7 +16,7 @@ import {set} from "@/lib/slices/baseSlice";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import "./styles.css";
 import Link from "next/link";
-import {open} from "@tauri-apps/api/dialog";
+import {open} from "@tauri-apps/plugin-dialog";
 import {useRouter} from "next/navigation";
 
 export default function Files() {
@@ -180,30 +180,55 @@ export default function Files() {
     );
 }
 
-const flatPaths = (result) => {
-    if (result instanceof Array || !!result["children"]) {
-        // dir
-        let arr = [];
-        let toTraverse;
-        if (result instanceof Array) toTraverse = result;
-        else toTraverse = result["children"];
-        toTraverse.forEach((child) => {
-            try {
-                arr = arr.concat(flatPaths(child)).filter((v) => !!v);
-            } catch (e) {
-            }
-        });
-        return arr;
-    } else {
-        // file
-        return result.name.toLowerCase().endsWith(".ply") ? result : undefined;
+const join = (...a) => {
+    let suffix = /[/\\]+$/
+    return a.map(v => v.replace(suffix, '')).join('/')
+}
+
+const flatPaths = async (rootPath, result) => {
+    let arr = []
+    for (let item of result) {
+        const newPath = join(rootPath, item.name)
+        if (item.isDirectory) {
+            const children = await readDir(newPath)
+            arr = arr.concat(await flatPaths(newPath, children))
+        } else {
+            if (item.name.toLowerCase().endsWith('.ply'))
+                arr.push({
+                    path: newPath,
+                    name: item.name
+                })
+        }
     }
-};
+    return arr
+}
+
+// const flatPaths = async (rootPath, result) => {
+//     if (result instanceof Array || result.isDirectory) {
+//         // dir
+//         let arr = [];
+//         let toTraverse;
+//         if (result instanceof Array) toTraverse = result;
+//         else if (result.isDirectory) {
+//             result = await readDir(join(rootPath, result.name))
+//         } else toTraverse = result["children"];
+//         toTraverse.forEach((child) => {
+//             try {
+//                 arr = arr.concat(flatPaths(child)).filter((v) => !!v);
+//             } catch (e) {
+//             }
+//         });
+//         return arr;
+//     } else {
+//         // file
+//         return result.name.toLowerCase().endsWith(".ply") ? join(rootPath, result) : undefined;
+//     }
+// };
 
 export async function getEntries(path) {
     try {
-        const entries = await readDir(path, {recursive: true});
-        return flatPaths(entries);
+        const entries = await readDir(path);
+        return await flatPaths(path, entries);
     } catch (e) {
         console.error(e);
         return [];
