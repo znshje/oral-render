@@ -23,7 +23,7 @@ const materialConfig = {
 };
 
 const readBindaryFile = async (pathObj) => {
-    if (window.__TAURI__) {
+    if (window.__TAURI__ && !(pathObj instanceof File)) {
         // import {readFile} from "@tauri-apps/plugin-fs";
         const {readFile} = await import('@tauri-apps/plugin-fs')
         // const {readFile} = window.require('@ta')
