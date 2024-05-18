@@ -1,10 +1,10 @@
-import React, {useMemo, useRef} from "react";
-import {Canvas} from "@react-three/fiber";
-import {ArcballControls, PerspectiveCamera, View} from "@react-three/drei";
-import {useAppDispatch, useAppSelector} from "@/lib/hooks";
 import ModelViewer from "@/components/model/model-viewer.jsx";
 import Scene from "@/components/render/model-render.jsx";
-import {set} from "@/lib/slices/baseSlice.js";
+import { useAppDispatch, useAppSelector } from "@/lib/hooks";
+import { set } from "@/lib/slices/baseSlice.js";
+import { ArcballControls, PerspectiveCamera, View } from "@react-three/drei";
+import { Canvas } from "@react-three/fiber";
+import React, { useMemo, useRef } from "react";
 
 const BaseComponents = ({cameraConfig}) => {
 
@@ -125,6 +125,14 @@ export default function MultiRender() {
                 <label htmlFor="checkbox-adjust-camera">调整相机视角</label>
             </div>
             <ToolDivider/>
+            <div>
+                <span>模型透明度 (%)</span>
+                <input type="number" value={renderConfig.modelOpacity} onChange={e => {
+                    dispatch(set(state => {
+                        state.render.modelOpacity = parseInt(e.target.value)
+                    }))
+                }} style={{width: 60}} />
+            </div>
             <div>
                 <input id="checkbox-flatshading" type="checkbox" checked={renderConfig.flatShading} onChange={e => {
                     dispatch(set(state => {

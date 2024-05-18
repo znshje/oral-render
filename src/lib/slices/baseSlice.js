@@ -1,6 +1,6 @@
-import {createSlice} from "@reduxjs/toolkit";
-import {produce} from 'immer'
-import {Matrix4} from "three";
+import {createSlice} from '@reduxjs/toolkit';
+import {produce} from 'immer';
+import {Matrix4} from 'three';
 
 const initialState = {
     fileList: [],
@@ -12,7 +12,7 @@ const initialState = {
     notification: true,
     camera: {
         orthographic: false,
-        fov: 50,
+        fov: 50
     },
     view: {
         width: 400,
@@ -38,9 +38,11 @@ const initialState = {
             bold: false,
             size: 28,
             absolute: false
-        }
+        },
+        labels: {},
+        modelOpacity: 100
     }
-}
+};
 
 export const baseSlice = createSlice({
     name: 'base',
@@ -51,18 +53,18 @@ export const baseSlice = createSlice({
             return {...state, ...newAttr};
         },
         setCamera: (state, action) => {
-            return {...state, camera: {...state.camera, ...action.payload}}
+            return {...state, camera: {...state.camera, ...action.payload}};
         },
         setView: (state, action) => {
-            return {...state, view: {...state.view, ...action.payload}}
+            return {...state, view: {...state.view, ...action.payload}};
         },
         setDnd: (state, action) => {
-            return {...state, dnd: {...state.dnd, ...action.payload}}
+            return {...state, dnd: {...state.dnd, ...action.payload}};
         },
         setRender: (state, action) => {
-            return {...state, render: {...state.render, ...action.payload}}
+            return {...state, render: {...state.render, ...action.payload}};
         }
     }
-})
+});
 
 export const {set, setCamera, setView, setDnd, setRender} = baseSlice.actions;

@@ -1,14 +1,14 @@
-import {useAppDispatch, useAppSelector} from "@/lib/hooks";
+import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 // import {readFile,} from "@tauri-apps/plugin-fs";
-import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
-import {ContactShadows, PivotControls} from "@react-three/drei";
-import {useFrame, useThree} from "@react-three/fiber";
-import {set} from "@/lib/slices/baseSlice";
-import {PLYLoader} from "three/examples/jsm/loaders/PLYLoader";
-import * as THREE from "three";
-import {DoubleSide, Matrix4, Quaternion, Vector3} from "three";
-import {acceleratedRaycast, computeBoundsTree, disposeBoundsTree} from 'three-mesh-bvh';
 import CameraRotation from "@/components/render/camera-rotation.jsx";
+import { set } from "@/lib/slices/baseSlice";
+import { ContactShadows, PivotControls } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { DoubleSide, Matrix4, Quaternion, Vector3 } from "three";
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader";
 
 // Add the extension functions
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -138,9 +138,11 @@ const Model = ({modelPath, setLoading}) => {
     useEffect(() => {
         if (ref.current) {
             ref.current.material.flatShading = renderConfig.flatShading
+            ref.current.material.transparent = renderConfig.modelOpacity < 100.0
+            ref.current.material.opacity = renderConfig.modelOpacity / 100.0
             ref.current.material.needsUpdate = true
         }
-    }, [renderConfig.flatShading]);
+    }, [renderConfig.flatShading, renderConfig.modelOpacity]);
 
     return (model && (<>
         <PivotControls
