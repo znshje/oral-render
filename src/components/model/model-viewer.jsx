@@ -1,5 +1,5 @@
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
-import React, {forwardRef, useCallback, useEffect, useState} from "react";
+import React, {forwardRef, useCallback, useEffect, useRef, useState} from "react";
 import {set} from "@/lib/slices/baseSlice.js";
 import * as Popover from '@radix-ui/react-popover';
 import {MixerHorizontalIcon} from '@radix-ui/react-icons';
@@ -42,6 +42,8 @@ const FileHoverMask = ({name, count}) => {
     </div>
 }
 
+let mouseStart = false
+
 /**
  * Support DnD file selection
  * @constructor
@@ -52,6 +54,8 @@ function ModelViewer({children, index}, ref) {
     const dnd = useAppSelector((state) => state.base.dnd);
     const theFile = useAppSelector(state => state.base.render.files[index])
     const renderConfig = useAppSelector((state) => state.base.render);
+
+    const inputRef = useRef();
 
     const [label, setLabel] = useState('')
     const [filePrepare, setFilePrepare] = useState(undefined)
@@ -100,6 +104,8 @@ function ModelViewer({children, index}, ref) {
         onDragLeave={onDragLeave}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
+        onMouseDown={() => {mouseStart = true;}}
+        onMouseMove={() => {mouseStart = false;}}
         style={{
             position: 'relative',
             display: 'flex',
@@ -108,6 +114,11 @@ function ModelViewer({children, index}, ref) {
             justifyContent: 'center'
         }}
     >
+        <input type="file" ref={inputRef} onChange={e => {
+            if (e.target.files.length > 0) {
+                setFile(e.target.files)
+            }
+        }} style={{display: 'none'}} />
         <div style={{
             width: viewConfig.width, height: viewConfig.height, position: 'absolute',
             left: 0,
@@ -150,6 +161,10 @@ function ModelViewer({children, index}, ref) {
                                         setLabel(e.target.value)
                                     }}/>
                                 </div>
+                                <button style={{height: 64}} onClick={() => {
+                                    inputRef.current.click()
+                                }}>选择模型
+                                </button>
                                 <button disabled={!theFile} onClick={() => {
                                     setFile(undefined)
                                 }}>删除模型

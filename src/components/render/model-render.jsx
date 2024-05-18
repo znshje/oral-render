@@ -1,5 +1,5 @@
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
-import {readFile,} from "@tauri-apps/plugin-fs";
+// import {readFile,} from "@tauri-apps/plugin-fs";
 import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {ContactShadows, PivotControls} from "@react-three/drei";
 import {useFrame, useThree} from "@react-three/fiber";
@@ -22,6 +22,26 @@ const materialConfig = {
     // clearcoatRoughness: 0.2,
 };
 
+const readBindaryFile = async (pathObj) => {
+    if (window.__TAURI__) {
+        // import {readFile} from "@tauri-apps/plugin-fs";
+        const {readFile} = await import('@tauri-apps/plugin-fs')
+        // const {readFile} = window.require('@ta')
+        return await readFile(pathObj)
+    } else {
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.addEventListener('load', e => {
+                console.log('loaded', e, reader.result)
+                resolve({
+                    buffer: reader.result
+                })
+            })
+            reader.readAsArrayBuffer(pathObj)
+        })
+    }
+}
+
 const Model = ({modelPath, setLoading}) => {
     const [model, setModel] = useState(null);
     const boxVec = useRef(new Vector3())
@@ -43,7 +63,7 @@ const Model = ({modelPath, setLoading}) => {
         if (!modelPath) return;
 
         setLoading(0);
-        const data = await readFile(modelPath);
+        const data = await readBindaryFile(modelPath);
 
         const loader = new PLYLoader();
         const geometry = loader.parse(data.buffer);
@@ -126,6 +146,9 @@ const Model = ({modelPath, setLoading}) => {
         <PivotControls
             disableScaling
             visible={renderConfig.enableTransform}
+            disableAxes={!renderConfig.enableTransform}
+            disableRotations={!renderConfig.enableTransform}
+            disableSliders={!renderConfig.enableTransform}
             autoTransform={false}
             matrix={matrix}
             onDrag={(l) => {
