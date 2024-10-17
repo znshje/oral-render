@@ -193,7 +193,7 @@ const flatPaths = async (rootPath, result) => {
             const children = await readDir(newPath)
             arr = arr.concat(await flatPaths(newPath, children))
         } else {
-            if (item.name.toLowerCase().endsWith('.ply'))
+            if (item.name.toLowerCase().endsWith('.glb'))
                 arr.push({
                     path: newPath,
                     name: item.name

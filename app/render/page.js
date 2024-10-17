@@ -5,7 +5,7 @@ import {
 } from "@radix-ui/themes";
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
 import {
-    readFile, readTextFile, writeFile,
+    readFile, writeFile,
 } from "@tauri-apps/plugin-fs";
 import {useCallback, useEffect, useMemo, useState, useRef} from "react";
 import {ArcballControls, Bvh, OrthographicCamera} from "@react-three/drei";
@@ -15,22 +15,38 @@ import {PLYLoader} from "three/examples/jsm/loaders/PLYLoader";
 import {
     DoubleSide,
     Vector3,
-    Layers,
-    NeutralToneMapping
+    NeutralToneMapping,
+    LinearSRGBColorSpace,
+    MeshPhysicalMaterial,
+    Color,
+    Object3D,
+    Mesh,
+    MeshBasicMaterial, NoToneMapping, Box3, BufferGeometry
 } from "three";
 import {useRouter} from "next/navigation";
 import {
     isPermissionGranted, requestPermission, sendNotification,
 } from "@tauri-apps/plugin-notification";
+import {GLTFLoader} from "three/examples/jsm/loaders/GLTFLoader";
 
 let objectId = null;
 const materialConfig = {
-    roughness: 1.0, // metalness: 0.32,
-    reflectivity: 1.0, // clearcoat: 0.3,
+    roughness: 0.2, // metalness: 0.32,
+    reflectivity: 0.3, // clearcoat: 0.3,
     // clearcoatRoughness: 0.2,
 };
 
-const Model = ({modelPath, setLoading, onLoad}) => {
+const materialForMaskConfig = {
+    color: '#000000'
+}
+
+const gumMaterialConfig = {
+    roughness: 0.1, // metalness: 0.32,
+    reflectivity: 0.2, // clearcoat: 0.3,
+    // clearcoatRoughness: 0.2,
+};
+
+const Model = ({maskMode, modelPath, setLoading, onLoad}) => {
     const [model, setModel] = useState(null);
 
     const loadModel = useCallback(async () => {
@@ -76,26 +92,175 @@ const Model = ({modelPath, setLoading, onLoad}) => {
         model && (
             <mesh geometry={model}>
                 <meshPhysicalMaterial
-                    vertexColors={true}
+                    vertexColors={!maskMode}
                     side={DoubleSide}
-                    {...materialConfig}
+                    {...(maskMode ? materialForMaskConfig : materialConfig)}
                 />
             </mesh>
         )
     );
 };
 
-const Scene = ({children}) => {
-    return (
-        <>
-            {children}
-            <BasicComponents/>
+const materialMemory = {}
+
+const PartsModel = ({maskMode, modelPath, setLoading, onLoad}) => {
+    const [gumModel, setGumModel] = useState(null);
+    const [teethModel, setTeethModel] = useState(null);
+
+    const physicalMaterial = useMemo(() => new MeshPhysicalMaterial({
+        vertexColors: true,
+        side: DoubleSide,
+        ...materialConfig
+    }), [])
+
+    const teethMeshes = useMemo(() => {
+        if (!teethModel) return undefined
+        const mesh = new Object3D()
+
+        teethModel.forEach(g => {
+            const tid = parseInt(g.name.split('_')[1])
+            const color = new Color(`#${tid}${tid}${tid}`).convertLinearToSRGB()//.convertLinearToSRGB()
+
+            const mat = !maskMode ? physicalMaterial : Object.keys(materialMemory).indexOf(tid.toString()) > -1 ? materialMemory[tid.toString()] : (() => {
+                const m = new MeshBasicMaterial({
+                    vertexColors: false,
+                    color: color
+                })
+                materialMemory[tid.toString()] = m
+                return m
+            })()
+            const tmesh = new Mesh(g, mat)
+            mesh.add(tmesh)
+        })
+        return mesh
+    }, [maskMode, physicalMaterial, teethModel])
+
+    const loadModel = useCallback(async () => {
+        setGumModel((prev) => {
+            if (prev !== null) {
+                prev.dispose();
+            }
+            return null;
+        });
+        setTeethModel((prev) => {
+            if (prev !== null) {
+                prev.forEach(g => g.dispose())
+            }
+            return null;
+        });
+        if (!modelPath) return;
+
+        setLoading(0);
+        const data = await readFile(modelPath.path);
+
+        const loader = new GLTFLoader();
+        const gltf = await loader.parseAsync(data.buffer, '.')
+
+        let box = new Box3()
+        let gumGeometry, teethGeometry = []
+        gltf.scene.traverse(child => {
+            if (child.name === 'gum') {
+                child.geometry.computeVertexNormals()
+                gumGeometry = child.geometry
+                box.expandByObject(child)
+            } else if (child.name.startsWith('tooth_')) {
+                child.geometry.computeVertexNormals()
+                child.geometry.name = child.name
+                teethGeometry.push(child.geometry)
+                box.expandByObject(child)
+            }
+        })
+
+        const boxCenter = new Vector3()
+        box.getCenter(boxCenter)
+
+        gumGeometry.translate(-boxCenter.x, -boxCenter.y, -boxCenter.z)
+        teethGeometry.forEach(g => g.translate(-boxCenter.x, -boxCenter.y, -boxCenter.z))
+
+        setGumModel(gumGeometry);
+        setTeethModel(teethGeometry);
+        setTimeout(() => {
+            const _oid = {}
+            teethGeometry.forEach(g => _oid[g.uuid] = true)
+            objectId = {
+                [gumGeometry.uuid]: true,
+                ..._oid
+            };
+        }, 500)
+        setLoading(null);
+    }, [modelPath, setLoading]);
+
+    useEffect(() => {
+        loadModel();
+    }, [loadModel]);
+
+    useFrame(({scene, gl, camera}) => {
+        if (objectId !== null) {
+            scene.traverse((child) => {
+                if (child.isMesh && objectId && Object.keys(objectId).includes(child.geometry.uuid)) {
+                    gl.render(scene, camera);
+                    objectId = null;
+                    onLoad();
+                }
+            });
+        }
+    });
+
+    return (<>
+            {gumModel && (
+                <mesh geometry={gumModel} visible={!maskMode}>
+                    <meshPhysicalMaterial
+                        vertexColors={!maskMode}
+                        side={DoubleSide}
+                        {...gumMaterialConfig}
+                    />
+                </mesh>
+            )}
+            {teethModel && (
+                // <mesh geometry={teethModel}>
+                //     <meshPhysicalMaterial
+                //         vertexColors={!maskMode}
+                //         side={DoubleSide}
+                //         {...(maskMode ? {color: new Color()} : materialConfig)}
+                //     />
+                // </mesh>
+                <primitive object={teethMeshes}/>
+            )}
         </>
     );
 };
 
-const BasicComponents = () => {
+const Scene = ({children, maskMode}) => {
+    const {gl} = useThree()
+
+    useEffect(() => {
+        if (maskMode) {
+            gl.outputColorSpace = LinearSRGBColorSpace
+            gl.toneMapping = NoToneMapping
+        } else {
+            gl.outputColorSpace = LinearSRGBColorSpace
+            gl.toneMapping = NeutralToneMapping
+        }
+    }, [gl, maskMode])
+
+    return (
+        <>
+            {children}
+            <BasicComponents maskMode={maskMode}/>
+        </>
+    );
+};
+
+const BasicComponents = ({maskMode}) => {
     const {invalidate, controls} = useThree();
+    const lightRef = useRef()
+    const colorWhite = useMemo(() => new Color("#ffffff").convertLinearToSRGB(), [])
+
+    useFrame(({camera}) => {
+        if (lightRef.current) {
+            lightRef.current.position.copy(camera.position)
+        }
+    })
 
     useEffect(() => {
         if (controls) {
@@ -110,31 +275,40 @@ const BasicComponents = () => {
 
     return (
         <>
-            <ambientLight intensity={1 * Math.PI} color="#ffffff"/>
-            <directionalLight
-                color="#ffffff"
-                intensity={3.14}
-                position={new Vector3(0, -150, 0)}
-            />
-            <directionalLight
-                color="#ffffff"
-                intensity={4.7}
-                position={new Vector3(-200, 0, 0)}
-            />
-            <directionalLight
-                color="#ffffff"
-                intensity={4.7}
-                position={new Vector3(200, 0, 0)}
-            />
-            <directionalLight
-                color="#ffffff"
-                intensity={2.3}
-                position={new Vector3(0, 0, 200)}
-            />
+            {
+                maskMode === true ? <>
+                    <ambientLight intensity={1 * Math.PI / 2} color={"#000000"}/>
+                </> : (
+                    <>
+                        <ambientLight intensity={1 * Math.PI / 2} color={colorWhite}/>
+                        <directionalLight
+                            ref={lightRef}
+                            color={colorWhite}
+                            intensity={3.14 / 2.5}
+                            position={new Vector3(0, -150, 0)}
+                        />
+                        <directionalLight
+                            color={colorWhite}
+                            intensity={4.7 / 2.5}
+                            position={new Vector3(-200, 0, 0)}
+                        />
+                        <directionalLight
+                            color={colorWhite}
+                            intensity={4.7 / 2.5}
+                            position={new Vector3(200, 0, 0)}
+                        />
+                        <directionalLight
+                            color={colorWhite}
+                            intensity={2.3 / 2.5}
+                            position={new Vector3(0, 0, 200)}
+                        />
+                    </>
+                )
+            }
             <OrthographicCamera
                 fov={0}
-                position={[0, -150, 0]}
-                zoom={15}
+                position={[0, 0, 150]}
+                zoom={13}
                 near={0}
                 far={10000}
                 makeDefault
@@ -159,8 +333,15 @@ export default function Render() {
     const notification = useAppSelector((state) => state.base.notification);
     const [paused, setPaused] = useState(true);
     const [loading, setLoading] = useState(null);
+    const [isMask, setIsMask] = useState(false);
+    const [captureState, setCaptureState] = useState({
+        mask: false,
+        normal: false,
+        start: false
+    })
     const router = useRouter();
     const canvasRef = useRef();
+    const captureLock = useRef(false)
 
     const fileDisplayName = useMemo(() => {
         if (index < 0) return "";
@@ -180,31 +361,64 @@ export default function Render() {
         }
     }, [notification]);
 
-    const capture = useCallback(() => {
-        canvasRef.current.toBlob(
-            async (blob) => {
-                const data = await blob.arrayBuffer();
-                const outputFileName =
-                    (savePath + "/").replace(/\/\/$/, "/") +
-                    fileList[index].name +
-                    ".png";
-                await writeFile(outputFileName, new Uint8Array(data));
+    const capture = useCallback(async (isMask) => {
+        if (!captureState.start) return;
+        return new Promise(resolve => {
+            console.log('capturing in maskMode = ', isMask)
+
+            canvasRef.current.toBlob(
+                async (blob) => {
+                    const data = await blob.arrayBuffer();
+                    const outputFileName =
+                        (savePath + "/").replace(/\/\/$/, "/") +
+                        fileList[index].name + (isMask ? '_mask' : '') + ".png";
+                    await writeFile(outputFileName, new Uint8Array(data));
+                    resolve()
+                },
+                "png",
+                100
+            );
+        })
+    }, [captureState.start, fileList, index, savePath]);
+
+    const wait = useCallback(async () => {
+        return new Promise(resolve => setTimeout(resolve, 500));
+    }, [])
+
+    useEffect(() => {
+        if (captureState.start && !captureLock.current) {
+            captureLock.current = true;
+            new Promise(async resolve => {
+                setIsMask(false);
+                await wait()
+                await capture(false)
+
+                setIsMask(true);
+                await wait()
+                await capture(true)
+
+                setIsMask(false);
+                resolve()
+            }).then(() => {
                 dispatch(
                     set((state) => {
                         state.finishedAt = state.index;
                     })
                 );
-
                 notify({
                     title: `口扫模型照片渲染 (${index + 1}/${fileList.length})`,
-                    body: "照片已保存至 " + outputFileName,
+                    body: "照片已保存",
                 });
-
-            },
-            "png",
-            100
-        );
-    }, [dispatch, fileList, index, notify, savePath]);
+            }).finally(() => {
+                captureLock.current = false;
+                setCaptureState({
+                    start: false,
+                    mask: false,
+                    normal: false
+                })
+            });
+        }
+    }, [capture, captureState.start, dispatch, fileList.length, index, notify, wait])
 
     useEffect(() => {
         if (index > -1 && paused) return;
@@ -298,7 +512,13 @@ export default function Render() {
                     >
                         下一个
                     </Button>
-                    <Button onClick={capture} disabled={loading !== null}>
+                    <Button onClick={() => {
+                        setCaptureState({
+                            start: true,
+                            mask: false,
+                            normal: false
+                        })
+                    }} disabled={loading !== null}>
                         截图
                     </Button>
                     <Checkbox
@@ -312,6 +532,14 @@ export default function Render() {
                         }
                     />
                     <span>打开通知</span>
+
+                    <Checkbox
+                        checked={isMask}
+                        onCheckedChange={(v) =>
+                            setIsMask(v => !v)
+                        }
+                    />
+                    <span>Mask Mode</span>
                     <Button onClick={() => router.replace("/")}>返回</Button>
                 </div>
                 <div>
@@ -357,6 +585,8 @@ export default function Render() {
                             toneMapping: NeutralToneMapping,
                             alpha: false,
                             preserveDrawingBuffer: true,
+                            outputColorSpace: LinearSRGBColorSpace,
+                            antialias: false
                         }}
                         style={{
                             border: "1px solid gray",
@@ -365,12 +595,19 @@ export default function Render() {
                     >
                         <color attach="background" args={["#ffffff"]}/>
                         <Bvh firstHitOnly>
-                            <Scene>
+                            <Scene maskMode={isMask}>
                                 {index > -1 && (
-                                    <Model
+                                    <PartsModel
+                                        maskMode={isMask}
                                         modelPath={fileList[index]}
                                         setLoading={setLoading}
-                                        onLoad={() => capture()}
+                                        onLoad={() => {
+                                            setCaptureState({
+                                                start: true,
+                                                mask: false,
+                                                normal: false
+                                            })
+                                        }}
                                     />
                                 )}
                             </Scene>
