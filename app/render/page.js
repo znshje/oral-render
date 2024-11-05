@@ -5,7 +5,8 @@ import {
 } from "@radix-ui/themes";
 import {useAppDispatch, useAppSelector} from "@/lib/hooks";
 import {
-    readFile, writeFile,
+    BaseDirectory,
+    readFile, writeFile, writeTextFile,
 } from "@tauri-apps/plugin-fs";
 import {useCallback, useEffect, useMemo, useState, useRef} from "react";
 import {ArcballControls, Bvh, OrthographicCamera} from "@react-three/drei";
@@ -230,7 +231,7 @@ const PartsModel = ({maskMode, modelPath, setLoading, onLoad}) => {
     );
 };
 
-const Scene = ({children, maskMode}) => {
+const Scene = ({children, maskMode, onPoseChange}) => {
     const {gl} = useThree()
 
     useEffect(() => {
@@ -246,14 +247,15 @@ const Scene = ({children, maskMode}) => {
     return (
         <>
             {children}
-            <BasicComponents maskMode={maskMode}/>
+            <BasicComponents maskMode={maskMode} onPoseChange={onPoseChange}/>
         </>
     );
 };
 
-const BasicComponents = ({maskMode}) => {
+const BasicComponents = ({maskMode, onPoseChange}) => {
     const {invalidate, controls} = useThree();
     const lightRef = useRef()
+    const cameraRef = useRef()
     const colorWhite = useMemo(() => new Color("#ffffff").convertLinearToSRGB(), [])
 
     useFrame(({camera}) => {
@@ -272,6 +274,15 @@ const BasicComponents = ({maskMode}) => {
             controls.setMouseAction("ZOOM", 2, "CTRL");
         }
     }, [controls]);
+
+    useEffect(() => {
+        if (cameraRef.current) {
+            onPoseChange && onPoseChange([
+                ...cameraRef.current.rotation.toArray().map(x => x * 180 / Math.PI).filter((_, i) => i < 3),
+                ...cameraRef.current.position.toArray()
+            ]);
+        }
+    }, [onPoseChange]);
 
     return (
         <>
@@ -306,6 +317,7 @@ const BasicComponents = ({maskMode}) => {
                 )
             }
             <OrthographicCamera
+                ref={cameraRef}
                 fov={0}
                 position={[0, 0, 150]}
                 zoom={13}
@@ -317,6 +329,10 @@ const BasicComponents = ({maskMode}) => {
                 makeDefault
                 onChange={() => {
                     invalidate();
+                    onPoseChange && onPoseChange([
+                        ...cameraRef.current.rotation.toArray().map(x => x * 180 / Math.PI).filter((_, i) => i < 3),
+                        ...cameraRef.current.position.toArray()
+                    ]);
                 }}
             />
         </>
@@ -339,6 +355,7 @@ export default function Render() {
         normal: false,
         start: false
     })
+    const [cameraPose, setCameraPose] = useState([0, 0, 0, 0, 0, 150])
     const router = useRouter();
     const canvasRef = useRef();
     const captureLock = useRef(false)
@@ -363,23 +380,37 @@ export default function Render() {
 
     const capture = useCallback(async (isMask) => {
         if (!captureState.start) return;
-        return new Promise(resolve => {
+        return new Promise((resolve, reject) => {
             console.log('capturing in maskMode = ', isMask)
 
-            canvasRef.current.toBlob(
-                async (blob) => {
-                    const data = await blob.arrayBuffer();
-                    const outputFileName =
-                        (savePath + "/").replace(/\/\/$/, "/") +
-                        fileList[index].name + (isMask ? '_mask' : '') + ".png";
-                    await writeFile(outputFileName, new Uint8Array(data));
-                    resolve()
-                },
-                "png",
-                100
-            );
+            try {
+                canvasRef.current.toBlob(
+                    async (blob) => {
+                        const data = await blob.arrayBuffer();
+                        const outputFileName =
+                            (savePath + "/").replace(/\/\/$/, "/") +
+                            fileList[index].name.replace('.glb', '') + (isMask ? '_mask' : '') + ".png";
+                        const outputCamFileName =
+                            (savePath + "/").replace(/\/\/$/, "/") +
+                            fileList[index].name.replace('.glb', '') + "_post.txt";
+                        try {
+                            // await writeTextFile('file.txt', "Hello world", { baseDir: BaseDirectory.Home });
+                            await writeTextFile(outputCamFileName, cameraPose.join(' '))
+                            await writeFile(outputFileName, new Uint8Array(data));
+                        } catch (e) {
+                            reject(e)
+                        }
+
+                        resolve()
+                    },
+                    "png",
+                    100
+                );
+            } catch (e) {
+                reject(e)
+            }
         })
-    }, [captureState.start, fileList, index, savePath]);
+    }, [captureState.start, fileList, index, savePath, cameraPose]);
 
     const wait = useCallback(async () => {
         return new Promise(resolve => setTimeout(resolve, 500));
@@ -388,17 +419,29 @@ export default function Render() {
     useEffect(() => {
         if (captureState.start && !captureLock.current) {
             captureLock.current = true;
-            new Promise(async resolve => {
-                setIsMask(false);
-                await wait()
-                await capture(false)
+            new Promise(async (resolve, reject) => {
+                try {
+                    setIsMask(false);
+                    await wait()
+                    await capture(false)
 
-                setIsMask(true);
-                await wait()
-                await capture(true)
+                    setIsMask(true);
+                    await wait()
+                    await capture(true)
 
-                setIsMask(false);
-                resolve()
+                    setIsMask(false);
+                    resolve()
+                } catch (e) {
+                    reject(e)
+                }
+            }).catch(e => {
+                console.log('catch error', e)
+                captureLock.current = false;
+                setCaptureState({
+                    start: false,
+                    mask: false,
+                    normal: false
+                })
             }).then(() => {
                 dispatch(
                     set((state) => {
@@ -595,7 +638,7 @@ export default function Render() {
                     >
                         <color attach="background" args={["#ffffff"]}/>
                         <Bvh firstHitOnly>
-                            <Scene maskMode={isMask}>
+                            <Scene maskMode={isMask} onPoseChange={setCameraPose}>
                                 {index > -1 && (
                                     <PartsModel
                                         maskMode={isMask}
